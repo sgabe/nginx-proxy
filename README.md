@@ -414,9 +414,9 @@ When using location overrides, you are responsible for handling any requests tha
 to forward a request.  By default, nginx-proxy aliases containers to the defined `VIRTUAL_HOST` name.  So if you launch your container with a `VIRTUAL_HOST` value of `app.example.com`, then forwarding a request to your container would look something like this:
 
 ```
-	location / {
-		proxy_pass http://app.example.com;
-	}
+location / {
+	proxy_pass http://app.example.com;
+}
 ```
 
 If you are using an SSL-enabled container, you would use `https://` in place of `http://`.  You could include any number of other location blocks for nginx to consider and even forward requests to external hosts when they match certain conditions.  You can also use any other rules and instructions
