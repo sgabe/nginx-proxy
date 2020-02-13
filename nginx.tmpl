@@ -3,22 +3,37 @@
 {{ $external_http_port := coalesce $.Env.HTTP_PORT "80" }}
 {{ $external_https_port := coalesce $.Env.HTTPS_PORT "443" }}
 
+# -----------------------------------------------------------------------------
+# ENABLE_IPV6: {{ $.Env.ENABLE_IPV6 }}
+# DEFAULT_HOST: {{ $.Env.DEFAULT_HOST }}
+# VIRTUAL_PROTO: {{ $.Env.VIRTUAL_PROTO }}
+# HTTPS_METHOD: {{ $.Env.HTTPS_METHOD }}
+# CERT_NAME: {{ $.Env.CERT_NAME }}
+# networks: {{ json $CurrentContainer.Networks }}
+# -----------------------------------------------------------------------------
+
 {{ define "upstream" }}
+        # upstream(Container={{ .Container.Name }}, Address={{ json .Address }}, Network={{ .Network.Name }})
+        # Using swarm: {{ if .Container.Node.ID }}yes{{else}}no{{end}}
+        # Port published on host: {{ if .Address.HostPort }}yes{{else}}no{{end}}
 	{{ if .Address }}
 		{{/* If we got the containers from swarm and this container's port is published to host, use host IP:PORT */}}
 		{{ if and .Container.Node.ID .Address.HostPort }}
-			# {{ .Container.Node.Name }}/{{ .Container.Name }}
-			server {{ .Container.Node.Address.IP }}:{{ .Address.HostPort }};
+        server {{ .Container.Node.Address.IP }}:{{ .Address.HostPort }};  # {{ .Container.Node.Name }}/{{ .Container.Name }} (swarm mode and port published on host)
 		{{/* If there is no swarm node or the port is not published on host, use container's IP:PORT */}}
 		{{ else if .Network }}
-			# {{ .Container.Name }}
-			server {{ .Network.IP }}:{{ .Address.Port }};
+        server {{ .Network.IP }}:{{ .Address.Port }};  # {{ .Container.Name }}
+		{{ else }}
+		# unexpected case 1
+		# Container: {{ json .Container }}
 		{{ end }}
 	{{ else if .Network }}
 		# {{ .Container.Name }}
 		{{ if .Network.IP }}
-			server {{ .Network.IP }} down;
+			server {{ .Network.IP }} down;  # {{ .Container.Name }}
 		{{ else }}
+			#### no .Address and no .Network provided to upstream template
+			# Container: {{ json .Container }}
 			server 127.0.0.1 down;
 		{{ end }}
 	{{ end }}
@@ -197,10 +212,14 @@ server {
 {{ $is_regexp := hasPrefix "~" $host }}
 {{ $upstream_name := when $is_regexp (sha1 $host) $host }}
 
-# {{ $host }}
+# ===================== {{ $host }}
 upstream {{ $upstream_name }} {
 
 {{ range $container := $containers }}
+        # ------------------------------------------------------
+        # container: {{ $container.Name }}
+        # VIRTUAL_HOST: {{ $container.Env.VIRTUAL_HOST }}
+        # VIRTUAL_PORT: {{ $container.Env.VIRTUAL_PORT }}
 	{{ $addrLen := len $container.Addresses }}
 
 	{{ range $knownNetwork := $CurrentContainer.Networks }}
@@ -210,10 +229,12 @@ upstream {{ $upstream_name }} {
 
 				{{/* If only 1 port exposed, use that */}}
 				{{ if eq $addrLen 1 }}
+        # only 1 port exposed
 					{{ $address := index $container.Addresses 0 }}
 					{{ template "upstream" (dict "Container" $container "Address" $address "Network" $containerNetwork) }}
 				{{/* If more than one port exposed, use the one matching VIRTUAL_PORT env var, falling back to standard web port 80 */}}
 				{{ else }}
+        # multiple ports exposed: {{ json $container.Addresses }}
 					{{ $port := coalesce $container.Env.VIRTUAL_PORT "80" }}
 					{{ $address := where $container.Addresses "Port" $port | first }}
 					{{ template "upstream" (dict "Container" $container "Address" $address "Network" $containerNetwork) }}
@@ -265,8 +286,10 @@ upstream {{ $upstream_name }} {
 {{ $is_https := (and (ne $https_method "nohttps") (ne $cert "") (exists (printf "/etc/nginx/certs/%s.crt" $cert)) (exists (printf "/etc/nginx/certs/%s.key" $cert))) }}
 
 {{ if $is_https }}
+# start if $is_https
 
 {{ if eq $https_method "redirect" }}
+# HTTPS_METHOD=redirect start
 server {
 	server_name {{ $host }};
 	listen {{ $external_http_port }} {{ $default_server }};
@@ -288,6 +311,8 @@ server {
 		return 301 https://$host$request_uri;
 	}
 }
+
+# HTTPS_METHOD=redirect end
 {{ end }}
 
 server {
@@ -373,11 +398,13 @@ server {
 	{{ end }}
 }
 
+# end if $is_https
 {{ end }}
 
 {{ if or (not $is_https) (eq $https_method "noredirect") }}
 
 server {
+	# not https or HTTPS_METHOD=noredirect
 	server_name {{ $host }};
 	listen {{ $external_http_port }} {{ $default_server }};
 	client_max_body_size 0;
@@ -430,6 +457,7 @@ server {
 
 {{ if (and (not $is_https) (exists "/etc/nginx/certs/default.crt") (exists "/etc/nginx/certs/default.key")) }}
 server {
+	# not https and /etc/nginx/certs/default.crt and /etc/nginx/certs/default.key exist
 	server_name {{ $host }};
 	{{ if $no_http2 }}
 	listen {{ $external_https_port }} ssl {{ $default_server }};
@@ -449,6 +477,7 @@ server {
 	ssl_certificate_key /etc/nginx/certs/default.key;
 }
 {{ end }}
-
 {{ end }}
+# ===================== end {{ $host }}
+
 {{ end }}
